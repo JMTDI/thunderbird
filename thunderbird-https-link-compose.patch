@@ -1,0 +1,56 @@
+diff --git a/mail/base/content/contentAreaClick.js b/mail/base/content/contentAreaClick.js
+index 5041a442e2..444d029d67 100644
+--- a/mail/base/content/contentAreaClick.js
++++ b/mail/base/content/contentAreaClick.js
+@@ -15,6 +15,7 @@ ChromeUtils.defineESModuleGetters(this, {
+   PhishingDetector: "resource:///modules/PhishingDetector.sys.mjs",
+   BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
+ });
++var { MailServices } = ChromeUtils.importESModule("resource:///modules/MailServices.sys.mjs");
+ XPCOMUtils.defineLazyPreferenceGetter(
+   this,
+   "alternativeAddonSearchUrl",
+@@ -177,10 +178,41 @@ function contentAreaClick(aEvent) {
+ 
+   if (urlPhishCheckResult === 0) {
+     // Use linkText instead.
+-    openLinkExternally(linkText);
++    if (linkText && linkText.startsWith("https://")) {
++      // For https:// links, compose email with link as subject
++      composeEmailWithLinkAsSubject(linkText);
++    } else {
++      openLinkExternally(linkText);
++    }
+     return true;
+   }
+ 
+-  openLinkExternally(href);
++  // Check if this is an https:// link and compose email instead
++  if (href && href.startsWith("https://")) {
++    composeEmailWithLinkAsSubject(href);
++  } else {
++    openLinkExternally(href);
++  }
+   return true;
+ }
++
++/**
++ * Compose a new email with the provided URL as the subject.
++ *
++ * @param {string} url - The URL to use as the email subject
++ */
++function composeEmailWithLinkAsSubject(url) {
++  const params = Cc[
++    "@mozilla.org/messengercompose/composeparams;1"
++  ].createInstance(Ci.nsIMsgComposeParams);
++  params.type = Ci.nsIMsgCompType.New;
++  params.format = Ci.nsIMsgCompFormat.Default;
++  params.composeFields = Cc[
++    "@mozilla.org/messengercompose/composefields;1"
++  ].createInstance(Ci.nsIMsgCompFields);
++
++  // Set the link as the subject
++  params.composeFields.subject = url;
++
++  MailServices.compose.OpenComposeWindowWithParams(null, params);
++}
