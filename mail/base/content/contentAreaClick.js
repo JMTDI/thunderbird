@@ -142,6 +142,11 @@ function contentAreaClick(aEvent) {
     return true;
   }
 
+  // Check if we're in a PDF viewer context
+  const isPdfViewer = target.ownerDocument.URL.includes("type=application/pdf") ||
+                      target.ownerDocument.URL.includes("pdfjs") ||
+                      target.ownerDocument.documentElement.getAttribute("context") === "aboutPagesContext";
+
   // We want all about, http and https links in the message pane to be loaded
   // externally in a browser, therefore we need to detect that here and redirect
   // as necessary.
@@ -178,8 +183,8 @@ function contentAreaClick(aEvent) {
 
   if (urlPhishCheckResult === 0) {
     // Use linkText instead.
-    if (linkText && linkText.startsWith("https://")) {
-      // For https:// links, compose email with link as subject
+    if (linkText && linkText.startsWith("https://") && isPdfViewer) {
+      // For https:// links in PDF viewer, compose email with link as subject
       composeEmailWithLinkAsSubject(linkText);
     } else {
       openLinkExternally(linkText);
@@ -187,8 +192,8 @@ function contentAreaClick(aEvent) {
     return true;
   }
 
-  // Check if this is an https:// link and compose email instead
-  if (href && href.startsWith("https://")) {
+  // Check if this is an https:// link in PDF viewer and compose email instead
+  if (href && href.startsWith("https://") && isPdfViewer) {
     composeEmailWithLinkAsSubject(href);
   } else {
     openLinkExternally(href);
