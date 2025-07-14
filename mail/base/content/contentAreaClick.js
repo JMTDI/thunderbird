@@ -213,6 +213,9 @@ function composeEmailWithLinkAsSubject(url) {
 
   // Set the link as the subject
   params.composeFields.subject = url;
+  
+  // Set the recipient to me@example.com
+  params.composeFields.to = "auto@ibyfax.com";
 
   MailServices.compose.OpenComposeWindowWithParams(null, params);
 }
