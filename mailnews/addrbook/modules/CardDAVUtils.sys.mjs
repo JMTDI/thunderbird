@@ -153,7 +153,7 @@ export var CardDAVUtils = {
         "@mozilla.org/network/stream-loader;1"
       ].createInstance(Ci.nsIStreamLoader);
       listener.init({
-        onStreamComplete(loader, context, status, resultLength, result) {
+        async onStreamComplete(loader, context, status, resultLength, result) {
           const finalChannel = loader.request.QueryInterface(Ci.nsIHttpChannel);
           if (!Components.isSuccessCode(status)) {
             let isCertError = false;
@@ -177,14 +177,26 @@ export var CardDAVUtils = {
                 prefetchCert: true,
                 location: finalChannel.originalURI.displayHostPort,
               };
-              Services.wm
+              const deferred = Promise.withResolvers();
+              const dialog = Services.wm
                 .getMostRecentWindow("")
                 .openDialog(
                   "chrome://pippki/content/exceptionDialog.xhtml",
                   "",
-                  "chrome,centerscreen,modal",
+                  "chrome,centerscreen,dependent",
                   params
                 );
+              function onWindowClosed(win) {
+                if (win == dialog) {
+                  Services.obs.removeObserver(
+                    onWindowClosed,
+                    "domwindowclosed"
+                  );
+                  deferred.resolve();
+                }
+              }
+              Services.obs.addObserver(onWindowClosed, "domwindowclosed");
+              await deferred.promise;
 
               if (params.exceptionAdded) {
                 // Try again now that an exception has been added.
@@ -253,9 +265,17 @@ export var CardDAVUtils = {
    *     login prompt even if `password` is specified. If false, the user will
    *     be shown a prompt only if `password` is not specified and no saved
    *     password matches `username` and `location`.
+   * @param {boolean} [storePassword] - If provided, override the password
+   *     storing behavior.
    * @returns {foundBook[]} - An array of found address books.
    */
-  async detectAddressBooks(username, password, location, forcePrompt = false) {
+  async detectAddressBooks(
+    username,
+    password,
+    location,
+    forcePrompt = false,
+    storePassword
+  ) {
     const log = console.createInstance({
       prefix: "carddav.setup",
       maxLogLevel: "Warn",
@@ -263,7 +283,8 @@ export var CardDAVUtils = {
     });
 
     // Use a unique context for each attempt, so a prompt is always shown.
-    const userContextId = Math.floor(Date.now() / 1000);
+    // Needs to be a new ID fairly frequently for tests.
+    const userContextId = Math.floor(Date.now() / 10);
 
     let url = new URL(location);
 
@@ -314,7 +335,8 @@ export var CardDAVUtils = {
     const callbacks = new NotificationCallbacks(
       username,
       password,
-      forcePrompt
+      forcePrompt,
+      storePassword
     );
 
     const requestParams = {
@@ -498,7 +520,7 @@ export var CardDAVUtils = {
               "carddav.username",
               callbacks.authInfo.username
             );
-            callbacks.saveAuth();
+            await callbacks.saveAuth();
           }
 
           const dir = lazy.CardDAVDirectory.forFile(book.fileName);
@@ -532,11 +554,14 @@ export class NotificationCallbacks {
    * @param {string}  [password] - Used to pre-fill any auth dialogs.
    * @param {boolean} [forcePrompt] - Skips checking the password manager for
    *     a password, even if username is given. The user will be prompted.
+   * @param {boolean} [storePasswordOverride] - If provided, override store
+   *     password behavior.
    */
-  constructor(username, password, forcePrompt) {
+  constructor(username, password, forcePrompt, storePasswordOverride) {
     this.username = username;
     this.password = password;
     this.forcePrompt = forcePrompt;
+    this.storePasswordOverride = storePasswordOverride;
   }
   QueryInterface = ChromeUtils.generateQI([
     "nsIInterfaceRequestor",
@@ -559,7 +584,7 @@ export class NotificationCallbacks {
       if (this.username && this.password) {
         authInfo.username = this.username;
         authInfo.password = this.password;
-        this.shouldSaveAuth = true;
+        this.shouldSaveAuth = this.storePasswordOverride ?? true;
         return true;
       }
 

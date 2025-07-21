@@ -12,14 +12,32 @@ const { CardDAVServer } = ChromeUtils.importESModule(
   "resource://testing-common/CardDAVServer.sys.mjs"
 );
 
+const { FeedUtils } = ChromeUtils.importESModule(
+  "resource:///modules/FeedUtils.sys.mjs"
+);
+
 const { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
+);
+
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
+
+const { sinon } = ChromeUtils.importESModule(
+  "resource://testing-common/Sinon.sys.mjs"
+);
+
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 
 let expectedBooks;
 
 add_setup(async () => {
   do_get_profile();
+  // Initialize the AB manager.
+  MailServices.ab.directories;
   // Port 9999 is special and makes this work with an email account.
   CardDAVServer.open("test@test.invalid", "bob", 9999);
   const uid = MailServices.ab.newAddressBook(
@@ -39,8 +57,8 @@ add_setup(async () => {
     CardDAVServer.origin,
     null,
     "test",
-    "test@test.invalid",
-    "bob",
+    CardDAVServer.username,
+    CardDAVServer.password,
     "",
     ""
   );
@@ -52,6 +70,11 @@ add_setup(async () => {
     "test.invalid",
     "imap"
   );
+  abAccount.incomingServer.password = CardDAVServer.password;
+  const identity = MailServices.accounts.createIdentity();
+  identity.email = "test@test.invalid";
+  abAccount.addIdentity(identity);
+  abAccount.defaultIdentity = identity;
 
   // Oauth with server that's not supported.
   const oauthAccount = MailServices.accounts.createAccount();
@@ -98,8 +121,7 @@ add_setup(async () => {
 
   registerCleanupFunction(async () => {
     MailServices.ab.deleteAddressBook(book.URI);
-    Services.logins.removeLogin(login);
-    Services.logins.removeLogin(secondLogin);
+    Services.logins.removeAllLogins();
     MailServices.accounts.removeAccount(abAccount, true);
     MailServices.accounts.removeAccount(oauthAccount, true);
     MailServices.accounts.removeAccount(secondAccount, true);
@@ -262,4 +284,241 @@ add_task(async function test_getAddressBooksForExistingAccounts() {
   for (const [index, book] of firstResult.addressBooks.entries()) {
     checkFoundBook(book, index);
   }
+});
+
+add_task(async function test_getAddressBooksForAccountStorePassword() {
+  const initialLogins = await Services.logins.searchLoginsAsync({
+    origin: CardDAVServer.origin,
+  });
+  Assert.equal(
+    initialLogins.length,
+    1,
+    "Should already have one login at the start of the test"
+  );
+  for (const login of initialLogins) {
+    Services.logins.removeLogin(login);
+  }
+
+  const books = await RemoteAddressBookUtils.getAddressBooksForAccount(
+    CardDAVServer.username,
+    "bob",
+    CardDAVServer.origin
+  );
+  let syncPromise = TestUtils.topicObserved("addrbook-directory-synced");
+  let directory = await books[0].create();
+
+  const firstLogins = await Services.logins.searchLoginsAsync({
+    origin: CardDAVServer.origin,
+  });
+  Assert.equal(firstLogins.length, 0, "Should not store a login by default");
+
+  let [rawDirectory] = await syncPromise;
+
+  let removePromise = TestUtils.topicObserved(
+    "addrbook-directory-deleted",
+    subject => subject == rawDirectory
+  );
+  MailServices.ab.deleteAddressBook(directory.URI);
+  await removePromise;
+
+  info("This time we'll tell it to save the password");
+
+  const moreBooks = await RemoteAddressBookUtils.getAddressBooksForAccount(
+    CardDAVServer.username,
+    CardDAVServer.password,
+    CardDAVServer.origin,
+    true
+  );
+
+  syncPromise = TestUtils.topicObserved("addrbook-directory-synced");
+  directory = await moreBooks[0].create();
+
+  const secondLogins = await Services.logins.searchLoginsAsync({
+    origin: CardDAVServer.origin,
+  });
+  Assert.equal(firstLogins.length, 0, "Should not store a login by default");
+
+  [rawDirectory] = await syncPromise;
+
+  removePromise = TestUtils.topicObserved(
+    "addrbook-directory-deleted",
+    subject => subject == rawDirectory
+  );
+  MailServices.ab.deleteAddressBook(directory.URI);
+  await removePromise;
+
+  Assert.equal(secondLogins.length, 1, "Should store a login when told to");
+  Assert.equal(
+    secondLogins[0].username,
+    CardDAVServer.username,
+    "Should have username provided in the search"
+  );
+  Assert.equal(
+    secondLogins[0].password,
+    CardDAVServer.password,
+    "Should have password provided in the search"
+  );
+});
+
+add_task(
+  async function test_getAddressBooksForExistingAccounts_ignoreNonMail() {
+    const accountQuerySpy = sinon.spy(
+      RemoteAddressBookUtils,
+      "getAddressBooksForAccount"
+    );
+    try {
+      if (!MailServices.accounts.localFoldersServer) {
+        throw new Error("Need local folders");
+      }
+    } catch {
+      MailServices.accounts.createLocalMailAccount();
+    }
+    const feedAccount = FeedUtils.createRssAccount("remoteAddressBookUtils");
+
+    const results =
+      await RemoteAddressBookUtils.getAddressBooksForExistingAccounts();
+    Assert.ok(Array.isArray(results), "Should get an array of results");
+    Assert.equal(results.length, 1, "Should get one account object");
+    Assert.equal(
+      accountQuerySpy.callCount,
+      1,
+      "Should only call getAddressBooksForAccount once"
+    );
+    Assert.ok(
+      accountQuerySpy.calledWith(
+        CardDAVServer.username,
+        CardDAVServer.password,
+        "https://test.invalid",
+        true
+      ),
+      "Should have called getAddressBooksForAccount for the test CardDAV account"
+    );
+
+    accountQuerySpy.restore();
+    MailServices.accounts.removeAccount(feedAccount, true);
+  }
+);
+
+add_task(
+  async function test_getAddressBooksForExistingAccounts_fallbackToIdentity() {
+    const abAccount = MailServices.accounts.accounts.find(
+      account => account.incomingServer.username == CardDAVServer.username
+    );
+    CardDAVServer.username = "neo";
+    abAccount.incomingServer.username = CardDAVServer.username;
+    abAccount.incomingServer.password = CardDAVServer.password;
+    const results =
+      await RemoteAddressBookUtils.getAddressBooksForExistingAccounts();
+    Assert.ok(Array.isArray(results), "Should get an array of results");
+    Assert.equal(results.length, 1, "Should get one account object");
+    const [firstResult] = results;
+    Assert.ok(
+      firstResult.account instanceof Ci.nsIMsgAccount,
+      "Should get the account"
+    );
+    Assert.equal(
+      firstResult.account.key,
+      abAccount.key,
+      "Should find results for the account without host in the username"
+    );
+    Assert.equal(
+      firstResult.existingAddressBookCount,
+      1,
+      "Should have an existing address book"
+    );
+    Assert.ok(
+      Array.isArray(firstResult.addressBooks),
+      "Should get an array of address book results"
+    );
+    Assert.equal(
+      firstResult.addressBooks.length,
+      expectedBooks.length,
+      "Should find expected amount of address books for accounts"
+    );
+    CardDAVServer.username = "test@test.invalid";
+    abAccount.incomingServer.username = CardDAVServer.username;
+    abAccount.incomingServer.password = CardDAVServer.password;
+  }
+);
+
+add_task(
+  async function test_getAddressBooksForExistingAccounts_passwordPrompt() {
+    const abAccount = MailServices.accounts.accounts.find(
+      account => account.incomingServer.username == CardDAVServer.username
+    );
+
+    const imapLogin = Cc[
+      "@mozilla.org/login-manager/loginInfo;1"
+    ].createInstance(Ci.nsILoginInfo);
+    const imapUri = `${abAccount.incomingServer.localStoreType}://${abAccount.incomingServer.hostName}`;
+    imapLogin.init(
+      imapUri,
+      null,
+      imapUri,
+      CardDAVServer.username,
+      CardDAVServer.password,
+      "",
+      ""
+    );
+    await Services.logins.addLoginAsync(imapLogin);
+
+    abAccount.incomingServer.forgetSessionPassword(false);
+    Assert.ok(
+      !abAccount.incomingServer.password,
+      "Should clear cached password"
+    );
+
+    const results =
+      await RemoteAddressBookUtils.getAddressBooksForExistingAccounts();
+    Assert.ok(Array.isArray(results), "Should get an array of results");
+    Assert.equal(results.length, 1, "Should get one account object");
+    const [firstResult] = results;
+    Assert.ok(
+      firstResult.account instanceof Ci.nsIMsgAccount,
+      "Should get the account"
+    );
+    Assert.equal(
+      firstResult.account.key,
+      abAccount.key,
+      "Should find results for the account without host in the username"
+    );
+
+    Services.logins.removeLogin(imapLogin);
+    abAccount.incomingServer.username = "other@test.invalid";
+    abAccount.incomingServer.forgetSessionPassword(false);
+    Assert.ok(
+      !abAccount.incomingServer.password,
+      "Should clear cached password again"
+    );
+
+    const emptyResults =
+      await RemoteAddressBookUtils.getAddressBooksForExistingAccounts();
+    Assert.deepEqual(
+      emptyResults,
+      [],
+      "Should not get any results when no account has a password available"
+    );
+
+    abAccount.incomingServer.username = CardDAVServer.username;
+    abAccount.incomingServer.password = CardDAVServer.password;
+  }
+);
+
+add_task(async function test_getAddressBooksForExistingAccounts_error() {
+  const abAccount = MailServices.accounts.accounts.find(
+    account => account.incomingServer.username == CardDAVServer.username
+  );
+  abAccount.incomingServer.password = "boo";
+
+  const loggedError = TestUtils.consoleMessageObserved(msg =>
+    msg.wrappedJSObject.arguments?.[0]
+      .toString()
+      .includes("Authorization failure")
+  );
+  const results =
+    await RemoteAddressBookUtils.getAddressBooksForExistingAccounts();
+  await loggedError;
+  Assert.deepEqual(results, [], "Should get an empty array");
+
+  abAccount.incomingServer.password = CardDAVServer.password;
 });
