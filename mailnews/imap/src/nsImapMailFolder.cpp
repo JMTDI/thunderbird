@@ -79,18 +79,6 @@ using mozilla::LogLevel;
 using mozilla::Preferences;
 using namespace mozilla::StaticPrefs;
 
-#define NS_PARSEMAILMSGSTATE_CID              \
-  {/* 2B79AC51-1459-11d3-8097-006008128C4E */ \
-   0x2b79ac51,                                \
-   0x1459,                                    \
-   0x11d3,                                    \
-   {0x80, 0x97, 0x0, 0x60, 0x8, 0x12, 0x8c, 0x4e}}
-static NS_DEFINE_CID(kParseMailMsgStateCID, NS_PARSEMAILMSGSTATE_CID);
-
-#define NS_IIMAPHOSTSESSIONLIST_CID \
-  {0x479ce8fc, 0xe725, 0x11d2, {0xa5, 0x05, 0x00, 0x60, 0xb0, 0xfc, 0x04, 0xb7}}
-static NS_DEFINE_CID(kCImapHostSessionList, NS_IIMAPHOSTSESSIONLIST_CID);
-
 #define MAILNEWS_CUSTOM_HEADERS "mailnews.customHeaders"
 
 extern LazyLogModule gAutoSyncLog;  // defined in nsAutoSyncManager.cpp
@@ -775,7 +763,7 @@ NS_IMETHODIMP nsImapMailFolder::UpdateFolderWithListener(
     nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
     // Do a discovery in its own url if needed. Do before SELECT url.
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionList, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     if (NS_SUCCEEDED(rv) && hostSession) {
       bool foundMailboxesAlready = false;
       nsCString serverKey;
@@ -2812,7 +2800,8 @@ nsresult nsImapMailFolder::SetupHeaderParseStream(
   m_nextMessageByteLength = aSize;
   if (!m_msgParser) {
     nsresult rv;
-    m_msgParser = do_CreateInstance(kParseMailMsgStateCID, &rv);
+    m_msgParser =
+        do_CreateInstance("@mozilla.org/messenger/messagestateparser;1", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
   } else
     m_msgParser->Clear();
@@ -3388,9 +3377,8 @@ NS_IMETHODIMP nsImapMailFolder::ApplyFilterHit(nsIMsgFilter* filter,
                                    getter_AddRefs(dstFolder));
             if (NS_FAILED(rv)) break;
 
-            nsCOMPtr<nsIMsgCopyService> copyService = do_GetService(
-                "@mozilla.org/messenger/messagecopyservice;1", &rv);
-            if (NS_FAILED(rv)) break;
+            nsCOMPtr<nsIMsgCopyService> copyService =
+                mozilla::components::Copy::Service();
             rv = copyService->CopyMessages(this, {&*msgHdr}, dstFolder, false,
                                            nullptr, msgWindow, false);
             if (NS_FAILED(rv)) {
@@ -4703,7 +4691,7 @@ nsImapMailFolder::NotifyMessageDeleted(const char* onlineFolderName,
 bool nsImapMailFolder::ShowDeletedMessages() {
   nsresult rv;
   nsCOMPtr<nsIImapHostSessionList> hostSession =
-      do_GetService(kCImapHostSessionList, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   NS_ENSURE_SUCCESS(rv, false);
 
   bool showDeleted = false;
@@ -4717,7 +4705,7 @@ bool nsImapMailFolder::ShowDeletedMessages() {
 bool nsImapMailFolder::DeleteIsMoveToTrash() {
   nsresult err;
   nsCOMPtr<nsIImapHostSessionList> hostSession =
-      do_GetService(kCImapHostSessionList, &err);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &err);
   NS_ENSURE_SUCCESS(err, true);
   bool rv = true;
 
@@ -5097,9 +5085,8 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
         case nsIImapUrl::nsImapMoveFolderHierarchy:
           if (m_copyState)  // delete folder gets here, but w/o an m_copyState
           {
-            nsCOMPtr<nsIMsgCopyService> copyService = do_GetService(
-                "@mozilla.org/messenger/messagecopyservice;1", &rv);
-            NS_ENSURE_SUCCESS(rv, rv);
+            nsCOMPtr<nsIMsgCopyService> copyService =
+                mozilla::components::Copy::Service();
             nsCOMPtr<nsIMsgFolder> srcFolder =
                 do_QueryInterface(m_copyState->m_srcSupport);
             if (srcFolder) {
@@ -7726,7 +7713,7 @@ NS_IMETHODIMP nsImapMailFolder::GetIsNamespace(bool* aResult) {
     GetHierarchyDelimiter(&hierarchyDelimiter);
 
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionList, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
     m_namespace = nsImapNamespaceList::GetNamespaceForFolder(
         serverKey.get(), onlineName.get(), hierarchyDelimiter);

@@ -973,7 +973,7 @@ function saveAccount(accountValues, account) {
   }
 
   for (var type in accountValues) {
-    var dest;
+    let dest = null;
     try {
       if (type == "identity") {
         dest = identity;
@@ -983,6 +983,8 @@ function saveAccount(accountValues, account) {
         dest = server.QueryInterface(Ci.nsIPop3IncomingServer);
       } else if (type == "imap") {
         dest = server.QueryInterface(Ci.nsIImapIncomingServer);
+      } else if (type == "ews") {
+        dest = server.QueryInterface(Ci.IEwsIncomingServer);
       } else if (type == "none") {
         dest = server.QueryInterface(Ci.nsINoIncomingServer);
       } else if (type == "nntp") {
@@ -992,8 +994,9 @@ function saveAccount(accountValues, account) {
       }
     } catch (ex) {
       // don't do anything, just means we don't support that
+      dest = null;
     }
-    if (dest == undefined) {
+    if (!dest) {
       continue;
     }
     var typeArray = accountValues[type];
@@ -1359,6 +1362,8 @@ function getAccountValue(
         source = server.QueryInterface(Ci.nsIPop3IncomingServer);
       } else if (type == "imap") {
         source = server.QueryInterface(Ci.nsIImapIncomingServer);
+      } else if (type == "ews") {
+        source = server.QueryInterface(Ci.IEwsIncomingServer);
       } else if (type == "none") {
         source = server.QueryInterface(Ci.nsINoIncomingServer);
       } else if (type == "nntp") {
@@ -1453,6 +1458,7 @@ function restorePage(pageId, account) {
             break;
           case "pop3":
           case "imap":
+          case "ews":
           case "nntp":
           case "server":
             element.serverkey = account.incomingServer.key;

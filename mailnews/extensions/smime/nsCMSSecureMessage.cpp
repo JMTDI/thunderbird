@@ -45,10 +45,7 @@ nsCMSSecureMessage::nsCMSSecureMessage() {
 nsCMSSecureMessage::~nsCMSSecureMessage() {}
 
 nsresult nsCMSSecureMessage::Init() {
-  nsresult rv;
-  nsCOMPtr<nsISupports> nssInitialized =
-      do_GetService("@mozilla.org/psm;1", &rv);
-  return rv;
+  return EnsureNSSInitializedChromeOrContent() ? NS_OK : NS_ERROR_NOT_AVAILABLE;
 }
 
 nsresult nsCMSSecureMessage::CheckUsageOk(nsIX509Cert* aCert,
@@ -57,13 +54,8 @@ nsresult nsCMSSecureMessage::CheckUsageOk(nsIX509Cert* aCert,
   NS_ENSURE_ARG_POINTER(aCert);
   *aCanBeUsed = false;
 
-  nsresult rv;
-  nsCOMPtr<nsIX509CertDB> certdb =
-      do_GetService("@mozilla.org/security/x509certdb;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   nsTArray<uint8_t> certBytes;
-  rv = aCert->GetRawDER(certBytes);
+  nsresult rv = aCert->GetRawDER(certBytes);
   NS_ENSURE_SUCCESS(rv, rv);
 
   RefPtr<SharedCertVerifier> certVerifier(GetDefaultCertVerifier());

@@ -40,6 +40,7 @@
 #include "nsIPromptService.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/LoadInfo.h"
+#include "nsNSSComponent.h"
 
 using namespace mozilla;
 using mozilla::net::LoadInfo;
@@ -47,13 +48,6 @@ using mozilla::net::LoadInfo;
 // Despite its name, this contains a folder path, for example INBOX/Trash.
 #define PREF_TRASH_FOLDER_PATH "trash_folder_name"
 #define DEFAULT_TRASH_FOLDER_PATH "Trash"  // XXX Is this a useful default?
-
-#define NS_SUBSCRIBABLESERVER_CID \
-  {0x8510876a, 0x1dd2, 0x11b2, {0x82, 0x53, 0x91, 0xf7, 0x1b, 0x34, 0x8a, 0x25}}
-static NS_DEFINE_CID(kSubscribableServerCID, NS_SUBSCRIBABLESERVER_CID);
-#define NS_IIMAPHOSTSESSIONLIST_CID \
-  {0x479ce8fc, 0xe725, 0x11d2, {0xa5, 0x05, 0x00, 0x60, 0xb0, 0xfc, 0x04, 0xb7}}
-static NS_DEFINE_CID(kCImapHostSessionListCID, NS_IIMAPHOSTSESSIONLIST_CID);
 
 NS_IMPL_ADDREF_INHERITED(nsImapIncomingServer, nsMsgIncomingServer)
 NS_IMPL_RELEASE_INHERITED(nsImapIncomingServer, nsMsgIncomingServer)
@@ -98,7 +92,7 @@ NS_IMETHODIMP nsImapIncomingServer::SetKey(
 
   nsresult rv;
   nsCOMPtr<nsIImapHostSessionList> hostSession =
-      do_GetService(kCImapHostSessionListCID, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCString key(aKey);
@@ -207,7 +201,7 @@ nsImapIncomingServer::SetServerDirectory(const nsACString& serverDirectory) {
   nsresult rv = GetKey(serverKey);
   if (NS_SUCCEEDED(rv)) {
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionListCID, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     if (NS_SUCCEEDED(rv))
       hostSession->SetOnlineDirForHost(
           serverKey.get(), PromiseFlatCString(serverDirectory).get());
@@ -227,7 +221,7 @@ nsImapIncomingServer::SetOverrideNamespaces(bool bVal) {
   if (!serverKey.IsEmpty()) {
     nsresult rv;
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionListCID, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     if (NS_SUCCEEDED(rv))
       hostSession->SetNamespacesOverridableForHost(serverKey.get(), bVal);
   }
@@ -246,7 +240,7 @@ nsImapIncomingServer::SetUsingSubscription(bool bVal) {
   if (!serverKey.IsEmpty()) {
     nsresult rv;
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionListCID, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     if (NS_SUCCEEDED(rv))
       hostSession->SetHostIsUsingSubscription(serverKey.get(), bVal);
   }
@@ -334,7 +328,7 @@ nsImapIncomingServer::SetDeleteModel(int32_t ivalue) {
   nsresult rv = SetIntValue("delete_model", ivalue);
   if (NS_SUCCEEDED(rv)) {
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionListCID, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
     hostSession->SetDeleteIsMoveToTrashForHost(
         m_serverKey.get(), ivalue == nsMsgImapDeleteModels::MoveToTrash);
@@ -735,16 +729,15 @@ nsresult nsImapIncomingServer::CreateProtocolInstance(
   switch (authMethod) {
     case nsMsgAuthMethod::passwordEncrypted:
     case nsMsgAuthMethod::secure:
-    case nsMsgAuthMethod::anything: {
-      nsCOMPtr<nsISupports> dummyUsedToEnsureNSSIsInitialized =
-          do_GetService("@mozilla.org/psm;1", &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
-    } break;
+    case nsMsgAuthMethod::anything:
+      NS_ENSURE_TRUE(EnsureNSSInitializedChromeOrContent(),
+                     NS_ERROR_NOT_AVAILABLE);
+      break;
     default:
       break;
   }
   nsCOMPtr<nsIImapHostSessionList> hostSession =
-      do_GetService(kCImapHostSessionListCID, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
   RefPtr<nsImapProtocol> protocolInstance(new nsImapProtocol());
   rv = protocolInstance->Initialize(hostSession, this);
@@ -850,7 +843,7 @@ nsImapIncomingServer::PerformExpand(nsIMsgWindow* aMsgWindow) {
   rv = imapService->DiscoverAllFolders(rootMsgFolder, this, aMsgWindow);
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIImapHostSessionList> hostSessionList =
-      do_GetService(kCImapHostSessionListCID, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   if (NS_SUCCEEDED(rv)) {
     nsAutoCString serverKey;
     rv = GetKey(serverKey);
@@ -1277,18 +1270,7 @@ NS_IMETHODIMP nsImapIncomingServer::FolderVerifiedOnline(
 /*static*/
 nsresult nsImapIncomingServer::PathFromFolder(nsIMsgFolder* folder,
                                               nsACString& shortPath) {
-  nsresult rv;
-  nsAutoCString folderURI;
-  rv = folder->GetURI(folderURI);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIURI> uri;
-  rv = NS_NewURI(getter_AddRefs(uri), folderURI);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsAutoCString fullfolderPath;
-  uri->GetPathQueryRef(fullfolderPath);
-  MsgUnescapeString(Substring(fullfolderPath, 1),  // Skip leading slash.
-                    nsINetUtil::ESCAPE_URL_PATH, shortPath);
-  return NS_OK;
+  return FolderPathInServer(folder, shortPath);
 }
 
 NS_IMETHODIMP nsImapIncomingServer::DiscoveryDone() {
@@ -2076,7 +2058,7 @@ NS_IMETHODIMP nsImapIncomingServer::SetServerID(const nsACString& aServerID) {
 NS_IMETHODIMP nsImapIncomingServer::CommitNamespaces() {
   nsresult rv;
   nsCOMPtr<nsIImapHostSessionList> hostSession =
-      do_GetService(kCImapHostSessionListCID, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
   return hostSession->CommitNamespacesForHost(this);
 }
@@ -2459,7 +2441,8 @@ nsresult nsImapIncomingServer::EnsureInner() {
 
   if (mInner) return NS_OK;
 
-  mInner = do_CreateInstance(kSubscribableServerCID, &rv);
+  mInner =
+      do_CreateInstance("@mozilla.org/messenger/subscribableserver;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
   return SetIncomingServer(this);
 }
@@ -2771,7 +2754,7 @@ nsImapIncomingServer::GetUriWithNamespacePrefixIfNecessary(
   rv = GetKey(serverKey);
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIImapHostSessionList> hostSessionList =
-      do_GetService(kCImapHostSessionListCID, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   nsImapNamespace* ns = nullptr;
   rv = hostSessionList->GetDefaultNamespaceOfTypeForHost(
       serverKey.get(), (EIMAPNamespaceType)namespaceType, ns);

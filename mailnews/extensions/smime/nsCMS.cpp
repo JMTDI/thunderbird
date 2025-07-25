@@ -9,6 +9,7 @@
 #include "CryptoTask.h"
 #include "ScopedNSSTypes.h"
 #include "cms.h"
+#include "mozilla/Components.h"
 #include "mozilla/Logging.h"
 #include "mozilla/RefPtr.h"
 #include "nsDependentSubstring.h"
@@ -44,10 +45,7 @@ nsCMSMessage::~nsCMSMessage() {
 }
 
 nsresult nsCMSMessage::Init() {
-  nsresult rv;
-  nsCOMPtr<nsISupports> nssInitialized =
-      do_GetService("@mozilla.org/psm;1", &rv);
-  return rv;
+  return EnsureNSSInitializedChromeOrContent() ? NS_OK : NS_ERROR_NOT_AVAILABLE;
 }
 
 NS_IMETHODIMP nsCMSMessage::VerifySignature(int32_t verifyFlags) {
@@ -123,7 +121,8 @@ NS_IMETHODIMP nsCMSMessage::GetSignerCert(nsIX509Cert** scert) {
     MOZ_LOG(gCMSLog, LogLevel::Debug,
             ("nsCMSMessage::GetSignerCert got signer cert"));
 
-    nsCOMPtr<nsIX509CertDB> certdb = do_GetService(NS_X509CERTDB_CONTRACTID);
+    nsCOMPtr<nsIX509CertDB> certdb =
+        mozilla::components::NSSCertificateDB::Service();
     nsTArray<uint8_t> certBytes;
     certBytes.AppendElements(si->cert->derCert.data, si->cert->derCert.len);
     nsresult rv = certdb->ConstructX509(certBytes, getter_AddRefs(cert));
@@ -1032,17 +1031,11 @@ nsCMSDecoderJS::~nsCMSDecoderJS() {
 }
 
 nsresult nsCMSDecoder::Init() {
-  nsresult rv;
-  nsCOMPtr<nsISupports> nssInitialized =
-      do_GetService("@mozilla.org/psm;1", &rv);
-  return rv;
+  return EnsureNSSInitializedChromeOrContent() ? NS_OK : NS_ERROR_NOT_AVAILABLE;
 }
 
 nsresult nsCMSDecoderJS::Init() {
-  nsresult rv;
-  nsCOMPtr<nsISupports> nssInitialized =
-      do_GetService("@mozilla.org/psm;1", &rv);
-  return rv;
+  return EnsureNSSInitializedChromeOrContent() ? NS_OK : NS_ERROR_NOT_AVAILABLE;
 }
 
 /* void start (in NSSCMSContentCallback cb, in voidPtr arg); */
@@ -1131,10 +1124,7 @@ nsCMSEncoder::~nsCMSEncoder() {
 }
 
 nsresult nsCMSEncoder::Init() {
-  nsresult rv;
-  nsCOMPtr<nsISupports> nssInitialized =
-      do_GetService("@mozilla.org/psm;1", &rv);
-  return rv;
+  return EnsureNSSInitializedChromeOrContent() ? NS_OK : NS_ERROR_NOT_AVAILABLE;
 }
 
 /* void start (); */

@@ -7,6 +7,8 @@
 #include "IEwsClient.h"
 #include "nsIMsgFolderNotificationService.h"
 #include "nsIMsgWindow.h"
+#include "nsMsgFolderFlags.h"
+#include "nsMsgUtils.h"
 #include "nsNetUtil.h"
 #include "nsPrintfCString.h"
 #include "OfflineStorage.h"
@@ -14,6 +16,9 @@
 #include "mozilla/Components.h"
 
 #define SYNC_STATE_PROPERTY "ewsSyncStateToken"
+
+static constexpr auto kDeleteModelPreferenceName = "delete_model";
+static constexpr auto kTrashFolderPreferenceName = "trash_folder_path";
 
 constexpr auto kEwsIdProperty = "ewsId";
 
@@ -154,6 +159,14 @@ nsresult EwsIncomingServer::MaybeCreateFolderWithDetails(
 
   rv = newFolder->SetName(name);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  if (flags & nsMsgFolderFlags::Trash) {
+    nsAutoCString folderPath;
+    rv = FolderPathInServer(newFolder, folderPath);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = SetTrashFolderPath(folderPath);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
   // Notify any consumers listening for updates regarding the folder's creation.
   nsCOMPtr<nsIMsgFolderNotificationService> notifier =
@@ -314,7 +327,8 @@ nsresult EwsIncomingServer::SyncFolderList(
   return client->SyncFolderHierarchy(listener, syncStateToken);
 }
 
-nsresult EwsIncomingServer::SyncAllFolders(nsIMsgWindow* aMsgWindow) {
+nsresult EwsIncomingServer::SyncAllFolders(nsIMsgWindow* aMsgWindow,
+                                           nsIUrlListener* urlListener) {
   nsCOMPtr<nsIMsgFolder> rootFolder;
   MOZ_TRY(GetRootFolder(getter_AddRefs(rootFolder)));
 
@@ -327,7 +341,7 @@ nsresult EwsIncomingServer::SyncAllFolders(nsIMsgWindow* aMsgWindow) {
   // though, the EWS client should handle any kind of rate limiting well enough,
   // so this improvement can come later.
   for (const auto& folder : msgFolders) {
-    nsresult rv = folder->GetNewMessages(aMsgWindow, nullptr);
+    nsresult rv = folder->GetNewMessages(aMsgWindow, urlListener);
     if (NS_FAILED(rv)) {
       // If we encounter an error, just log it rather than fail the whole sync.
       nsCString name;
@@ -400,7 +414,7 @@ NS_IMETHODIMP EwsIncomingServer::GetNewMessages(nsIMsgFolder* aFolder,
         NS_ENSURE_SUCCESS(rv, rv);
 
         if (isServer) {
-          return self->SyncAllFolders(window);
+          return self->SyncAllFolders(window, urlListener);
         }
 
         // Synchronizing the folder list may have invalidated the folder that
@@ -426,7 +440,7 @@ NS_IMETHODIMP EwsIncomingServer::PerformBiff(nsIMsgWindow* aMsgWindow) {
   // Sync the folder list for the account. Then sync the message list of each
   // folder in the tree.
   return SyncFolderList(aMsgWindow, [self = RefPtr(this), window]() {
-    return self->SyncAllFolders(window);
+    return self->SyncAllFolders(window, nullptr);
   });
 }
 
@@ -476,4 +490,112 @@ NS_IMETHODIMP EwsIncomingServer::GetEwsClient(IEwsClient** ewsClient) {
   client.forget(ewsClient);
 
   return NS_OK;
+}
+
+nsresult EwsIncomingServer::GetTrashFolder(nsIMsgFolder** trashFolder) {
+  NS_ENSURE_ARG_POINTER(trashFolder);
+
+  *trashFolder = nullptr;
+
+  nsAutoCString trashFolderPath;
+  nsresult rv = GetTrashFolderPath(trashFolderPath);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (trashFolderPath.IsEmpty()) {
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIMsgFolder> rootFolder;
+  rv = GetRootFolder(getter_AddRefs(rootFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIMsgFolder> foundTrashFolder;
+  rv = GetExistingFolder(rootFolder, trashFolderPath,
+                         getter_AddRefs(foundTrashFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  foundTrashFolder.forget(trashFolder);
+
+  return NS_OK;
+}
+
+nsresult EwsIncomingServer::UpdateTrashFolder() {
+  nsCOMPtr<nsIMsgFolder> trashFolder;
+  nsresult rv = GetTrashFolder(getter_AddRefs(trashFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (trashFolder) {
+    rv = trashFolder->SetFlag(nsMsgFolderFlags::Trash);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP EwsIncomingServer::SetDeleteModel(
+    IEwsIncomingServer::DeleteModel value) {
+  using DeleteModel = IEwsIncomingServer::DeleteModel;
+
+  if (value != DeleteModel::PERMANENTLY_DELETE &&
+      value != DeleteModel::MOVE_TO_TRASH) {
+    return NS_ERROR_ILLEGAL_VALUE;
+  }
+
+  if (value == DeleteModel::MOVE_TO_TRASH) {
+    nsresult rv = UpdateTrashFolder();
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return SetIntValue(kDeleteModelPreferenceName, value);
+}
+
+NS_IMETHODIMP EwsIncomingServer::GetDeleteModel(
+    IEwsIncomingServer::DeleteModel* returnValue) {
+  NS_ENSURE_ARG(returnValue);
+
+  int32_t modelCode;
+  nsresult rv = GetIntValue(kDeleteModelPreferenceName, &modelCode);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (modelCode != 0 && modelCode != 1) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  *returnValue = static_cast<IEwsIncomingServer::DeleteModel>(modelCode);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP EwsIncomingServer::SetTrashFolderPath(const nsACString& path) {
+  if (path.IsEmpty()) {
+    return NS_OK;
+  }
+
+  // Check that the path exists.
+  nsCOMPtr<nsIMsgFolder> rootFolder;
+  nsresult rv = GetRootFolder(getter_AddRefs(rootFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Make sure that the path to the new trash folder exists.
+  nsCOMPtr<nsIMsgFolder> newTrashFolder;
+  rv = GetExistingFolder(rootFolder, path, getter_AddRefs(newTrashFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Clear the flag on the current trash folder.
+  nsCOMPtr<nsIMsgFolder> currentTrashFolder;
+  rv = GetTrashFolder(getter_AddRefs(currentTrashFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (currentTrashFolder) {
+    rv = currentTrashFolder->ClearFlag(nsMsgFolderFlags::Trash);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  rv = SetStringValue(kTrashFolderPreferenceName, path);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return UpdateTrashFolder();
+}
+
+NS_IMETHODIMP EwsIncomingServer::GetTrashFolderPath(nsACString& returnValue) {
+  return GetStringValue(kTrashFolderPreferenceName, returnValue);
 }

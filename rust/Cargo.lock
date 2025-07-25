@@ -721,7 +721,7 @@ dependencies = [
  "storage_variant",
  "tempfile",
  "thin-vec",
- "time 0.1.45",
+ "time",
  "wr_malloc_size_of",
  "xpcom",
 ]
@@ -776,9 +776,9 @@ dependencies = [
 
 [[package]]
 name = "chrono"
-version = "0.4.40"
+version = "0.4.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a7964611d71df112cb1730f2ee67324fcf4d0fc6606acbbe9bfe06df124637c"
+checksum = "c469d952047f47f91b68d1cba3f10d63c11d73e4636f24f08daf0278abf01c4d"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -1397,9 +1397,9 @@ dependencies = [
 
 [[package]]
 name = "deranged"
-version = "0.3.11"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b42b6fa04a440b495c8b04d0e71b707c585f83cb9cb28cf8cd0d976c315e31b4"
+checksum = "9c9e6a11ca8224451684bc0d7d5a7adbf8f2fd6887261a1cfc3c0432f9d4068e"
 dependencies = [
  "powerfmt",
  "serde",
@@ -1736,14 +1736,14 @@ dependencies = [
 [[package]]
 name = "ews"
 version = "0.1.0"
-source = "git+https://github.com/thunderbird/ews-rs.git?rev=8806b6d609108a37eeb911753372a4e385159b74#8806b6d609108a37eeb911753372a4e385159b74"
+source = "git+https://github.com/thunderbird/ews-rs.git?rev=1fe0dc6852c1b17820f4e14372bdc1ed008376ee#1fe0dc6852c1b17820f4e14372bdc1ed008376ee"
 dependencies = [
  "log",
  "quick-xml",
  "serde",
  "serde_path_to_error",
  "thiserror 1.999.999",
- "time 0.3.36",
+ "time",
  "xml_struct",
 ]
 
@@ -1868,7 +1868,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thin-vec",
- "time 0.1.45",
  "uuid",
  "wr_malloc_size_of",
 ]
@@ -2260,6 +2259,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gecko_tracing"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+ "tracing-support",
+]
+
+[[package]]
 name = "geckoservo"
 version = "0.0.1"
 dependencies = [
@@ -2355,6 +2363,7 @@ dependencies = [
  "fog_control",
  "gecko-profiler",
  "gecko_logger",
+ "gecko_tracing",
  "geckoservo",
  "gkrust-shared",
  "gkrust_utils",
@@ -2472,6 +2481,7 @@ dependencies = [
  "fog_control",
  "gecko-profiler",
  "gecko_logger",
+ "gecko_tracing",
  "geckoservo",
  "gkrust-uniffi-components",
  "gkrust_utils",
@@ -2538,6 +2548,7 @@ dependencies = [
  "search",
  "suggest",
  "tabs",
+ "tracing-support",
  "uniffi",
  "webext-storage",
 ]
@@ -2572,9 +2583,9 @@ dependencies = [
 
 [[package]]
 name = "glean"
-version = "64.5.1"
+version = "64.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "670a275c24171f78152fb817ffb9d31e6b3b7679e574d7ee9f7f3ec21f1ea856"
+checksum = "dc009205ab570a032a9a620932acf697e69744881149ec10188c2a6e9f8bb058"
 dependencies = [
  "crossbeam-channel",
  "glean-core",
@@ -2587,9 +2598,9 @@ dependencies = [
 
 [[package]]
 name = "glean-core"
-version = "64.5.1"
+version = "64.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebccab975e944c0f4993135d7edb62b3a249b06dbd614b6d544d59588cf76f14"
+checksum = "7b6452ff6beb4f45f49bc48cec2c62d6b1c93036e09afa646c033009a98bab9a"
 dependencies = [
  "android_logger",
  "bincode",
@@ -2604,7 +2615,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.999.999",
- "time 0.1.45",
+ "time",
  "uniffi",
  "uuid",
  "wr_malloc_size_of",
@@ -4050,7 +4061,7 @@ dependencies = [
 [[package]]
 name = "mp4parse"
 version = "0.17.0"
-source = "git+https://github.com/mozilla/mp4parse-rust?rev=d3e4d255bd149d341c7e90f5e9fc84e743a8e179#d3e4d255bd149d341c7e90f5e9fc84e743a8e179"
+source = "git+https://github.com/mozilla/mp4parse-rust?rev=f955be5d2a04a631c0f1777d6f35370ea1a99e2d#f955be5d2a04a631c0f1777d6f35370ea1a99e2d"
 dependencies = [
  "bitreader",
  "byteorder",
@@ -4067,7 +4078,7 @@ version = "0.1.0"
 [[package]]
 name = "mp4parse_capi"
 version = "0.17.0"
-source = "git+https://github.com/mozilla/mp4parse-rust?rev=d3e4d255bd149d341c7e90f5e9fc84e743a8e179#d3e4d255bd149d341c7e90f5e9fc84e743a8e179"
+source = "git+https://github.com/mozilla/mp4parse-rust?rev=f955be5d2a04a631c0f1777d6f35370ea1a99e2d#f955be5d2a04a631c0f1777d6f35370ea1a99e2d"
 dependencies = [
  "byteorder",
  "fallible_collections",
@@ -4237,6 +4248,7 @@ dependencies = [
  "uuid",
  "winapi",
  "xpcom",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -5479,6 +5491,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sharded-slab"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
+dependencies = [
+ "lazy_static",
+]
+
+[[package]]
 name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5948,6 +5969,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "thread_local"
+version = "1.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b9ef9bad013ada3808854ceac7b46812a6465ba368859a37e2100283d2d719c"
+dependencies = [
+ "cfg-if",
+ "once_cell",
+]
+
+[[package]]
 name = "threadbound"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5955,20 +5986,9 @@ checksum = "06638f039e6c49cd649d92e0e792f665d088bece8eba4c99c6fdfc2776b4ddb0"
 
 [[package]]
 name = "time"
-version = "0.1.45"
+version = "0.3.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b797afad3f312d1c66a56d11d0316f916356d11bd158fbc6ca6389ff6bf805a"
-dependencies = [
- "libc",
- "wasi 0.10.0+wasi-snapshot-preview999",
- "winapi",
-]
-
-[[package]]
-name = "time"
-version = "0.3.36"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dfd88e563464686c916c7e46e623e520ddc6d79fa6641390f2e3fa86e83e885"
+checksum = "8a7619e19bc266e0f9c5e6686659d394bc57973859340060a69221e57dbc0c40"
 dependencies = [
  "deranged",
  "itoa",
@@ -5981,15 +6001,15 @@ dependencies = [
 
 [[package]]
 name = "time-core"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef927ca75afb808a4d64dd374f00a2adf8d0fcff8e7b184af886c3c87ec4a3f3"
+checksum = "c9e9a38711f559d9e3ce1cdb06dd7c5b8ea546bc90052da6d06bb76da74bb07c"
 
 [[package]]
 name = "time-macros"
-version = "0.2.18"
+version = "0.2.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f252a68540fde3a3877aeea552b832b40ab9a69e318efd078774a01ddee1ccf"
+checksum = "3526739392ec93fd8b359c8e98514cb3e8e021beb4e5f597b00a0221f8ed8a49"
 dependencies = [
  "num-conv",
  "time-core",
@@ -6056,6 +6076,60 @@ name = "topological-sort"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa7c7f42dea4b1b99439786f5633aeb9c14c1b53f75e282803c2ec2ad545873c"
+
+[[package]]
+name = "tracing"
+version = "0.1.41"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "784e0ac535deb450455cbfa28a6f0df145ea1bb7ae51b821cf5e7927fdcfbdd0"
+dependencies = [
+ "pin-project-lite",
+ "tracing-attributes",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-attributes"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "395ae124c09f9e6918a2310af6038fba074bcf474ac352496d5910dd59a2226d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "tracing-core"
+version = "0.1.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e672c95779cf947c5311f83787af4fa8fffd12fb27e4993211a84bdfd9610f9c"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
+name = "tracing-subscriber"
+version = "0.3.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8189decb5ac0fa7bc8b96b7cb9b2701d60d48805aca84a238004d665fcc4008"
+dependencies = [
+ "sharded-slab",
+ "thread_local",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-support"
+version = "0.1.0"
+source = "git+https://github.com/mozilla/application-services?rev=b5175a2a2458834c9fdc0468d851658b0657f95b#b5175a2a2458834c9fdc0468d851658b0657f95b"
+dependencies = [
+ "parking_lot",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+ "uniffi",
+]
 
 [[package]]
 name = "tracy-rs"
@@ -6479,13 +6553,6 @@ dependencies = [
 
 [[package]]
 name = "wasi"
-version = "0.10.0+wasi-snapshot-preview999"
-dependencies = [
- "wasi 0.14.2+wasi-0.2.4",
-]
-
-[[package]]
-name = "wasi"
 version = "0.11.999"
 dependencies = [
  "wasi 0.14.2+wasi-0.2.4",
@@ -6560,13 +6627,13 @@ dependencies = [
  "smallvec",
  "svg_fmt",
  "swgl",
- "time 0.1.45",
  "topological-sort",
  "tracy-rs",
  "webrender_api",
  "webrender_build",
  "wr_glyph_rasterizer",
  "wr_malloc_size_of",
+ "zeitstempel",
 ]
 
 [[package]]
@@ -6583,8 +6650,8 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_derive",
- "time 0.1.45",
  "wr_malloc_size_of",
+ "zeitstempel",
 ]
 
 [[package]]
@@ -7087,13 +7154,14 @@ dependencies = [
 
 [[package]]
 name = "zeitstempel"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eeea3eb6a30ed24e374f59368d3917c5180a845fdd4ed6f1b2278811a9e826f8"
+checksum = "94652f036694517fa67509942c3b60a51a19e1cd9cfd0f456eeb830ae8798d3d"
 dependencies = [
  "cfg-if",
  "libc",
  "once_cell",
+ "winapi",
 ]
 
 [[package]]

@@ -89,9 +89,7 @@ void MsgLogToConsole4(const nsAString& aErrorText, const nsCString& aFilename,
   nsCOMPtr<nsIScriptError> scriptError =
       do_CreateInstance(NS_SCRIPTERROR_CONTRACTID);
   if (NS_WARN_IF(!scriptError)) return;
-  nsCOMPtr<nsIConsoleService> console =
-      do_GetService(NS_CONSOLESERVICE_CONTRACTID);
-  if (NS_WARN_IF(!console)) return;
+  nsCOMPtr<nsIConsoleService> console = mozilla::components::Console::Service();
   if (NS_FAILED(scriptError->Init(aErrorText, aFilename, aLinenumber, 0, aFlag,
                                   "mailnews"_ns, false, false)))
     return;
@@ -608,7 +606,8 @@ nsresult FindFolder(const nsACString& aFolderURI, nsIMsgFolder** aFolder) {
   *aFolder = nullptr;
 
   nsresult rv;
-  nsCOMPtr<nsIFolderLookupService> fls(do_GetService(NSIFLS_CONTRACTID, &rv));
+  nsCOMPtr<nsIFolderLookupService> fls(
+      do_GetService(NS_FOLDERLOOKUPSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
   // GetFolderForURL returns NS_OK and null for non-existent folders
@@ -629,6 +628,25 @@ nsresult GetExistingFolder(const nsACString& aFolderURI,
   return *aFolder ? NS_OK : NS_MSG_ERROR_FOLDER_MISSING;
 }
 
+nsresult GetExistingFolder(nsIMsgFolder* parent, const nsACString& folderPath,
+                           nsIMsgFolder** folder) {
+  NS_ENSURE_ARG(parent);
+  NS_ENSURE_ARG_POINTER(folder);
+
+  nsAutoCString encodedPath;
+  nsresult rv = NS_MsgEscapeEncodeURLPath(folderPath, encodedPath);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsAutoCString folderUri;
+  rv = parent->GetURI(folderUri);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  folderUri.Append("/");
+  folderUri.Append(encodedPath);
+
+  return GetExistingFolder(folderUri, folder);
+}
+
 nsresult GetOrCreateFolder(const nsACString& aFolderURI,
                            nsIMsgFolder** aFolder) {
   NS_ENSURE_ARG_POINTER(aFolder);
@@ -636,7 +654,8 @@ nsresult GetOrCreateFolder(const nsACString& aFolderURI,
   *aFolder = nullptr;
 
   nsresult rv;
-  nsCOMPtr<nsIFolderLookupService> fls(do_GetService(NSIFLS_CONTRACTID, &rv));
+  nsCOMPtr<nsIFolderLookupService> fls(
+      do_GetService(NS_FOLDERLOOKUPSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = fls->GetOrCreateFolderForURL(aFolderURI, aFolder);
@@ -648,12 +667,14 @@ nsresult GetOrCreateFolder(const nsACString& aFolderURI,
 nsresult CreateFolderAndCache(nsIMsgFolder* parentFolder,
                               const nsACString& folderName,
                               nsIMsgFolder** folder) {
+  NS_ENSURE_ARG(parentFolder);
   NS_ENSURE_ARG_POINTER(folder);
 
   *folder = nullptr;
 
   nsresult rv;
-  nsCOMPtr<nsIFolderLookupService> fls(do_GetService(NSIFLS_CONTRACTID, &rv));
+  nsCOMPtr<nsIFolderLookupService> fls(
+      do_GetService(NS_FOLDERLOOKUPSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIMsgFolder> existingFolder;
@@ -678,6 +699,7 @@ nsresult CreateFolderAndCache(nsIMsgFolder* parentFolder,
   }
 
   if (existingFolder) {
+    existingFolder.forget(folder);
     return NS_MSG_FOLDER_EXISTS;
   }
 
@@ -685,6 +707,34 @@ nsresult CreateFolderAndCache(nsIMsgFolder* parentFolder,
   NS_ENSURE_SUCCESS(rv, rv);
 
   return *folder ? NS_OK : NS_ERROR_FAILURE;
+}
+
+nsresult CreateRootFolderAndCache(const nsACString& name,
+                                  nsIMsgFolder** folder) {
+  nsresult rv;
+  nsCOMPtr<nsIFolderLookupService> fls(
+      do_GetService(NS_FOLDERLOOKUPSERVICE_CONTRACTID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+  return fls->CreateRootFolderAndCache(name, folder);
+}
+
+nsresult FolderUri(nsIMsgFolder* folder, nsIURI** uri) {
+  nsAutoCString folderUri;
+  nsresult rv = folder->GetURI(folderUri);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_NewURI(uri, folderUri);
+}
+
+nsresult FolderPathInServer(nsIMsgFolder* folder, nsACString& path) {
+  nsCOMPtr<nsIURI> uri;
+  nsresult rv = FolderUri(folder, getter_AddRefs(uri));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsAutoCString fullfolderPath;
+  uri->GetFilePath(fullfolderPath);
+  return MsgUnescapeString(Substring(fullfolderPath, 1),  // Skip leading slash.
+                           nsINetUtil::ESCAPE_URL_PATH, path);
 }
 
 bool IsAFromSpaceLine(char* start, const char* end) {
@@ -1056,9 +1106,8 @@ nsresult NS_GetPersistentFile(const char* relPrefName, const char* absPrefName,
 
     // If not, and given a dirServiceProp, use directory service.
     if (!localFile && dirServiceProp) {
-      nsCOMPtr<nsIProperties> dirService(
-          do_GetService("@mozilla.org/file/directory_service;1"));
-      if (!dirService) return NS_ERROR_FAILURE;
+      nsCOMPtr<nsIProperties> dirService =
+          mozilla::components::Directory::Service();
       dirService->Get(dirServiceProp, NS_GET_IID(nsIFile),
                       getter_AddRefs(localFile));
       if (!localFile) return NS_ERROR_FAILURE;
@@ -1356,28 +1405,19 @@ void MsgStripQuotedPrintable(nsCString& aSrc) {
 
 nsresult MsgEscapeString(const nsACString& aStr, uint32_t aType,
                          nsACString& aResult) {
-  nsresult rv;
-  nsCOMPtr<nsINetUtil> nu = do_GetService(NS_NETUTIL_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  nsCOMPtr<nsINetUtil> nu = mozilla::components::IO::Service();
   return nu->EscapeString(aStr, aType, aResult);
 }
 
 nsresult MsgUnescapeString(const nsACString& aStr, uint32_t aFlags,
                            nsACString& aResult) {
-  nsresult rv;
-  nsCOMPtr<nsINetUtil> nu = do_GetService(NS_NETUTIL_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  nsCOMPtr<nsINetUtil> nu = mozilla::components::IO::Service();
   return nu->UnescapeString(aStr, aFlags, aResult);
 }
 
 nsresult MsgEscapeURL(const nsACString& aStr, uint32_t aFlags,
                       nsACString& aResult) {
-  nsresult rv;
-  nsCOMPtr<nsINetUtil> nu = do_GetService(NS_NETUTIL_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  nsCOMPtr<nsINetUtil> nu = mozilla::components::IO::Service();
   return nu->EscapeURL(aStr, aFlags, aResult);
 }
 
@@ -1407,19 +1447,15 @@ nsresult MsgGetHeadersFromKeys(nsIMsgDatabase* aDB,
 nsresult MsgExamineForProxyAsync(nsIChannel* channel,
                                  nsIProtocolProxyCallback* listener,
                                  nsICancelable** result) {
-  nsresult rv;
-
 #ifdef DEBUG
   nsCOMPtr<nsIURI> uri;
-  rv = channel->GetURI(getter_AddRefs(uri));
+  nsresult rv = channel->GetURI(getter_AddRefs(uri));
   NS_ASSERTION(NS_SUCCEEDED(rv) && uri,
                "The URI needs to be set before calling the proxy service");
 #endif
 
   nsCOMPtr<nsIProtocolProxyService> pps =
-      do_GetService(NS_PROTOCOLPROXYSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+      mozilla::components::ProtocolProxy::Service();
   return pps->AsyncResolve(channel, 0, listener, nullptr, result);
 }
 

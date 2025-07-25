@@ -96,10 +96,6 @@ using mozilla::Preferences;
 #define PREF_MAIL_ACCOUNTMANAGER_APPEND_ACCOUNTS \
   "mail.accountmanager.appendaccounts"
 
-#define NS_MSGACCOUNT_CID \
-  {0x68b25510, 0xe641, 0x11d2, {0xb7, 0xfc, 0x0, 0x80, 0x5f, 0x5, 0xff, 0xa5}}
-static NS_DEFINE_CID(kMsgAccountCID, NS_MSGACCOUNT_CID);
-
 #define SEARCH_FOLDER_FLAG "searchFolderFlag"
 #define SEARCH_FOLDER_FLAG_LEN (sizeof(SEARCH_FOLDER_FLAG) - 1)
 
@@ -169,12 +165,11 @@ nsresult nsMsgAccountManager::Init() {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  nsresult rv;
 #ifdef MOZ_PANORAMA
   if (mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
     // Replace the database service with the Panorama database.
     nsCOMPtr<nsIComponentRegistrar> componentRegistrar;
-    rv = NS_GetComponentRegistrar(getter_AddRefs(componentRegistrar));
+    nsresult rv = NS_GetComponentRegistrar(getter_AddRefs(componentRegistrar));
     NS_ENSURE_SUCCESS(rv, rv);
 
     componentRegistrar->RegisterFactory(
@@ -1605,8 +1600,8 @@ nsresult nsMsgAccountManager::CleanupOnExit() {
   // If enabled, clear cache on shutdown. This is common to all accounts.
   if (Preferences::GetBool("privacy.clearOnShutdown.cache")) {
     nsCOMPtr<nsICacheStorageService> cacheStorageService =
-        do_GetService("@mozilla.org/netwerk/cache-storage-service;1", &rv);
-    if (NS_SUCCEEDED(rv)) cacheStorageService->Clear();
+        mozilla::components::CacheStorage::Service();
+    cacheStorageService->Clear();
   }
 
   for (auto iter = m_incomingServers.Iter(); !iter.Done(); iter.Next()) {
@@ -1788,7 +1783,8 @@ nsresult nsMsgAccountManager::createKeyedAccount(const nsCString& key,
                                                  bool forcePositionToEnd,
                                                  nsIMsgAccount** aAccount) {
   nsresult rv;
-  nsCOMPtr<nsIMsgAccount> account = do_CreateInstance(kMsgAccountCID, &rv);
+  nsCOMPtr<nsIMsgAccount> account =
+      do_CreateInstance("@mozilla.org/messenger/account;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   account->SetKey(key);
@@ -1981,8 +1977,7 @@ nsresult nsMsgAccountManager::findServerInternal(
   }
   nsresult rv;
   nsCString hostname;
-  nsCOMPtr<nsIIDNService> idnService =
-      do_GetService("@mozilla.org/network/idn-service;1");
+  nsCOMPtr<nsIIDNService> idnService = mozilla::components::IDN::Service();
 
   rv = idnService->ConvertToDisplayIDN(serverHostname, hostname);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2355,9 +2350,7 @@ nsMsgAccountManager::GetChromePackageName(const nsACString& aExtensionName,
                                           nsACString& aChromePackageName) {
   nsresult rv;
   nsCOMPtr<nsICategoryManager> catman =
-      do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+      mozilla::components::CategoryManager::Service();
   nsCOMPtr<nsISimpleEnumerator> e;
   rv = catman->EnumerateCategory(MAILNEWS_ACCOUNTMANAGER_EXTENSIONS,
                                  getter_AddRefs(e));

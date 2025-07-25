@@ -161,6 +161,38 @@ const GET_ITEM_RESPONSE_BASE = `${EWS_SOAP_HEAD}
     </m:ResponseMessages>
   </m:GetItemResponse>
   ${EWS_SOAP_FOOT}`;
+
+const UPDATE_ITEM_RESPONSE_BASE = `${EWS_SOAP_HEAD}
+  <m:UpdateItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                        xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                        xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <m:ResponseMessages>
+      <m:UpdateItemResponseMessage ResponseClass="Success">
+        <m:ResponseCode>NoError</m:ResponseCode>
+        <m:Items>
+        </m:Items>
+        <m:ConflictResults>
+          <t:Count>0</t:Count>
+        </m:ConflictResults>
+      </m:UpdateItemResponseMessage>
+    </m:ResponseMessages>
+  </m:UpdateItemResponse>
+  ${EWS_SOAP_FOOT}`;
+
+const DELETE_ITEM_RESPONSE_BASE = `${EWS_SOAP_HEAD}
+  <DeleteItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                   xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <m:ResponseMessages>
+      <m:DeleteItemResponseMessage ResponseClass="Success">
+        <m:ResponseCode>NoError</m:ResponseCode>
+      </m:DeleteItemResponseMessage>
+    </m:ResponseMessages>
+  </DeleteItemResponse>
+  ${EWS_SOAP_FOOT}`;
+
 /**
  * A remote folder to sync from the EWS server. While initiating a test, an
  * array of folders is given to the EWS server, which will use it to populate
@@ -220,11 +252,6 @@ export class ItemInfo {
   parentId;
 
   /**
-   * @type {boolean}
-   */
-  itemSynced;
-
-  /**
    * @type {SyntheticMessage}
    */
   syntheticMessage;
@@ -238,7 +265,6 @@ export class ItemInfo {
    */
   constructor(parentId, syntheticMessage) {
     this.parentId = parentId;
-    this.itemSynced = false;
     this.syntheticMessage = syntheticMessage;
   }
 }
@@ -248,6 +274,15 @@ export class ItemInfo {
  * limited capacity.
  */
 export class EwsServer {
+  /**
+   * The maximum number of items this server will return in any sync request.
+   * Usually infinity, but can be lowered to test syncing that needs more than
+   * one request.
+   *
+   * @type {integer}
+   */
+  maxSyncItems = Infinity;
+
   /**
    * The folders registered on this EWS server.
    *
@@ -268,6 +303,15 @@ export class EwsServer {
    * @type {string[]}
    */
   updatedFolderIds = [];
+
+  /**
+   * A list of all changes that happened to folders.
+   *
+   * @type {Array<string, string>} - Each item in this array is two strings.
+   *   The first is "create" or "update" or "delete". The second is the id of
+   *   the folder that changed.
+   */
+  folderChanges = [];
 
   /**
    * The version identifier to use in responses.
@@ -306,6 +350,16 @@ export class EwsServer {
    * @type {Map<string, ItemInfo>}
    */
   #itemIdToItemInfo = new Map();
+
+  /**
+   * A list of all changes that happened to items.
+   *
+   * @type {Array<string, string, string>} - Each item is three elements:
+   *   - "create" or "delete".
+   *   - The id of the folder where the change occurred.
+   *   - The id of the item that changed.
+   */
+  itemChanges = [];
 
   /**
    * The parser to use for parsing XML documents.
@@ -518,6 +572,7 @@ export class EwsServer {
    */
   setRemoteFolders(folders) {
     this.folders = [];
+    this.folderChanges = [];
     this.#idToFolder.clear();
     this.#distinguishedIdToFolder.clear();
 
@@ -616,8 +671,12 @@ export class EwsServer {
       resBytes = this.#generateCopyItemResponse(reqDoc);
     } else if (reqDoc.getElementsByTagName("MoveFolder").length) {
       resBytes = this.#generateMoveFolderResponse(reqDoc);
-    } else if (reqDoc.getElementsByTagName("GetItem")) {
+    } else if (reqDoc.getElementsByTagName("UpdateItem").length) {
+      resBytes = this.#generateUpdateItemResponse(reqDoc);
+    } else if (reqDoc.getElementsByTagName("GetItem").length) {
       resBytes = this.#generateGetItemResponse(reqDoc);
+    } else if (reqDoc.getElementsByTagName("DeleteItem").length) {
+      resBytes = this.#generateDeleteItemResponse(reqDoc);
     } else {
       throw new Error("Unexpected EWS operation");
     }
@@ -719,32 +778,57 @@ export class EwsServer {
       .getElementsByTagName("t:FolderId")[0]
       .getAttribute("Id");
 
+    let offset = 0;
+    const reqSyncStateEl = reqDoc.getElementsByTagName("SyncState")[0];
+    if (reqSyncStateEl) {
+      offset = parseInt(reqSyncStateEl.textContent, 10);
+    }
+
     const responseMessageEl = resDoc.getElementsByTagName(
       "m:SyncFolderItemsResponseMessage"
     )[0];
 
-    // Append a dummy sync state.
-    // TODO: Make this dynamic.
-    const syncStateEl = resDoc.createElement("m:SyncState");
-    syncStateEl.appendChild(resDoc.createTextNode("H4sIAAA=="));
-    responseMessageEl.appendChild(syncStateEl);
+    let changes = this.itemChanges
+      .slice(offset)
+      .filter(([, parentId]) => parentId === syncFolderId);
+    if (changes.length > this.maxSyncItems) {
+      responseMessageEl.getElementsByTagName(
+        "m:IncludesLastItemInRange"
+      )[0].textContent = "false";
+      changes = changes.slice(0, this.maxSyncItems);
+    }
+
+    const resSyncStateEl = resDoc.createElement("m:SyncState");
+    resSyncStateEl.textContent = offset + changes.length;
+    responseMessageEl.appendChild(resSyncStateEl);
 
     const changesEl = resDoc.getElementsByTagName("m:Changes")[0];
-    this.#itemIdToItemInfo.forEach((info, itemId) => {
-      if (info.parentId === syncFolderId && !info.itemSynced) {
-        const createEl = resDoc.createElement("t:Create");
-        const messageEl = resDoc.createElement("t:Message");
-        const itemIdEl = resDoc.createElement("t:ItemId");
-        itemIdEl.setAttribute("Id", itemId);
-        const parentFolderIdEl = resDoc.createElement("t:ParentFolderId");
-        parentFolderIdEl.setAttribute("Id", info.parentId);
-
-        messageEl.appendChild(itemIdEl);
-        messageEl.appendChild(parentFolderIdEl);
-        createEl.appendChild(messageEl);
-        changesEl.appendChild(createEl);
-
-        info.itemSynced = true;
+    changes.forEach(([changeType, parentId, itemId]) => {
+      if (changeType == "create") {
+        const messageEl = changesEl
+          .appendChild(resDoc.createElement("t:Create"))
+          .appendChild(resDoc.createElement("t:Message"));
+        messageEl
+          .appendChild(resDoc.createElement("t:ItemId"))
+          .setAttribute("Id", itemId);
+        messageEl
+          .appendChild(resDoc.createElement("t:ParentFolderId"))
+          .setAttribute("Id", parentId);
+      } else if (changeType == "readflag") {
+        const item = this.#itemIdToItemInfo.get(itemId);
+        const changeEl = changesEl.appendChild(
+          resDoc.createElement("t:ReadFlagChange")
+        );
+        const itemEl = changeEl.appendChild(resDoc.createElement("t:ItemId"));
+        itemEl.setAttribute("Id", itemId);
+        itemEl.setAttribute("ChangeKey", "abc12345");
+        changeEl.appendChild(resDoc.createElement("t:IsRead")).textContent =
+          item.syntheticMessage.metaState.read;
+      } else if (changeType == "delete") {
+        changesEl
+          .appendChild(resDoc.createElement("t:Delete"))
+          .appendChild(resDoc.createElement("t:ItemId"))
+          .setAttribute("Id", itemId);
       }
     });
 
@@ -755,10 +839,10 @@ export class EwsServer {
    * Generate a response to a SyncFolderHierarchy operation.
    *
    * @see {@link https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/syncfolderhierarchy-operation#successful-syncfolderhierarchy-response}
-   * @param {XMLDocument} _reqDoc - The parsed document for the request to respond to.
+   * @param {XMLDocument} reqDoc - The parsed document for the request to respond to.
    * @returns {string} A serialized XML document.
    */
-  #generateSyncFolderHierarchyResponse(_reqDoc) {
+  #generateSyncFolderHierarchyResponse(reqDoc) {
     const resDoc = this.#parser.parseFromString(
       SYNC_FOLDER_HIERARCHY_RESPONSE_BASE,
       "text/xml"
@@ -766,52 +850,47 @@ export class EwsServer {
 
     this.#setVersion(resDoc);
 
+    let offset = 0;
+    const reqSyncStateEl = reqDoc.getElementsByTagName("SyncState")[0];
+    if (reqSyncStateEl) {
+      offset = parseInt(reqSyncStateEl.textContent, 10);
+    }
+
     const responseMessageEl = resDoc.getElementsByTagName(
       "m:SyncFolderHierarchyResponseMessage"
     )[0];
 
-    // Append a dummy sync state.
-    // TODO: Make this dynamic.
-    const syncStateEl = resDoc.createElement("m:SyncState");
-    syncStateEl.appendChild(resDoc.createTextNode("H4sIAAA=="));
-    responseMessageEl.appendChild(syncStateEl);
+    let changes = this.folderChanges.slice(offset);
+    if (changes.length > this.maxSyncItems) {
+      responseMessageEl.getElementsByTagName(
+        "m:IncludesLastFolderInRange"
+      )[0].textContent = "false";
+      changes = changes.slice(0, this.maxSyncItems);
+    }
+    const resSyncStateEl = resDoc.createElement("m:SyncState");
+    resSyncStateEl.textContent = offset + changes.length;
+    responseMessageEl.appendChild(resSyncStateEl);
 
     const changesEl = resDoc.getElementsByTagName("m:Changes")[0];
-    this.folders.forEach(folder => {
-      if (folder.distinguishedId == "msgfolderroot") {
-        // The root folder doesn't appear in SyncFolderHierarchy responses.
-        return;
+    changes.forEach(([changeType, folderId]) => {
+      if (changeType == "create") {
+        changesEl
+          .appendChild(resDoc.createElement("t:Create"))
+          .appendChild(resDoc.createElement("t:Folder"))
+          .appendChild(resDoc.createElement("t:FolderId"))
+          .setAttribute("Id", folderId);
+      } else if (changeType == "update") {
+        changesEl
+          .appendChild(resDoc.createElement("t:Update"))
+          .appendChild(resDoc.createElement("t:Folder"))
+          .appendChild(resDoc.createElement("t:FolderId"))
+          .setAttribute("Id", folderId);
+      } else if (changeType == "delete") {
+        changesEl
+          .appendChild(resDoc.createElement("t:Delete"))
+          .appendChild(resDoc.createElement("t:FolderId"))
+          .setAttribute("Id", folderId);
       }
-
-      // TODO: Support more than folder creation (possibly by allowing tests to
-      // define handlers or data structures to use when generating responses).
-      const createEl = resDoc.createElement("t:Create");
-      const folderEl = resDoc.createElement("t:Folder");
-      const folderIdEl = resDoc.createElement("t:FolderId");
-      folderIdEl.setAttribute("Id", folder.id);
-
-      folderEl.appendChild(folderIdEl);
-      createEl.appendChild(folderEl);
-      changesEl.appendChild(createEl);
-    });
-
-    this.deletedFolders.forEach(folder => {
-      const deleteEl = resDoc.createElement("t:Delete");
-      const folderIdEl = resDoc.createElement("t:FolderId");
-      folderIdEl.setAttribute("Id", folder.id);
-      deleteEl.appendChild(folderIdEl);
-      changesEl.appendChild(deleteEl);
-    });
-
-    this.updatedFolderIds.forEach(folderId => {
-      const updateEl = resDoc.createElement("t:Update");
-      const folderEl = resDoc.createElement("t:Folder");
-      const folderIdEl = resDoc.createElement("t:FolderId");
-      folderIdEl.setAttribute("Id", folderId);
-
-      folderEl.appendChild(folderIdEl);
-      updateEl.appendChild(folderEl);
-      changesEl.appendChild(updateEl);
     });
 
     return this.#serializer.serializeToString(resDoc);
@@ -937,7 +1016,9 @@ export class EwsServer {
   /**
    * Generate a response to a MoveItem operation.
    *
-   * @param {XMLDocument} reqDoc
+   * @param {XMLDocument} reqDoc - The parsed document for the request to
+   * respond to.
+   * @returns {string} A serialized XML document.
    */
   #generateMoveItemResponse(reqDoc) {
     const [destinationFolderId, itemIds] = extractMoveObjects(
@@ -965,7 +1046,9 @@ export class EwsServer {
   /**
    * Generate a response to a CopyItem operation.
    *
-   * @param {XMLDocument} reqDoc
+   * @param {XMLDocument} reqDoc - The parsed document for the request to
+   * respond to.
+   * @returns {string} A serialized XML document.
    */
   #generateCopyItemResponse(reqDoc) {
     const [destinationFolderId, itemIds] = extractMoveObjects(
@@ -993,7 +1076,9 @@ export class EwsServer {
   /**
    * Return a response to a `MoveFolder` request.
    *
-   * @param {XMLDocument} reqDoc
+   * @param {XMLDocument} reqDoc - The parsed document for the request to
+   * respond to.
+   * @returns {string} A serialized XML document.
    */
   #generateMoveFolderResponse(reqDoc) {
     const [destinationFolderId, folderIds] = extractMoveObjects(
@@ -1017,9 +1102,48 @@ export class EwsServer {
   }
 
   /**
+   * Return a response to an `UpdateItem` request.
+   *
+   * @param {XMLDocument} reqDoc - The parsed document for the request to
+   * respond to.
+   * @returns {string} A serialized XML document.
+   */
+  #generateUpdateItemResponse(reqDoc) {
+    const resDoc = this.#parser.parseFromString(
+      UPDATE_ITEM_RESPONSE_BASE,
+      "text/xml"
+    );
+
+    this.#setVersion(resDoc);
+
+    const itemsEl = resDoc.getElementsByTagName("m:Items")[0];
+    for (const itemChange of reqDoc.getElementsByTagName("t:ItemChange")) {
+      const itemId = itemChange
+        .getElementsByTagName("t:ItemId")[0]
+        .getAttribute("Id");
+      const item = this.#itemIdToItemInfo.get(itemId);
+      const isReadEl = itemChange.getElementsByTagName("t:IsRead")[0];
+      if (isReadEl) {
+        item.syntheticMessage.metaState.read = isReadEl.textContent == "true";
+        this.itemChanges.push(["readflag", item.parentId, itemId]);
+      }
+
+      const itemEl = itemsEl
+        .appendChild(resDoc.createElement("t:Message"))
+        .appendChild(resDoc.createElement("t:ItemId"));
+      itemEl.setAttribute("Id", itemId);
+      itemEl.setAttribute("ChangeKey", "abc12345");
+    }
+
+    return this.#serializer.serializeToString(resDoc);
+  }
+
+  /**
    * Return a response to a `GetItem` request.
    *
-   * @param {XMLDocument} reqDoc
+   * @param {XMLDocument} reqDoc - The parsed document for the request to
+   * respond to.
+   * @returns {string} A serialized XML document.
    */
   #generateGetItemResponse(reqDoc) {
     const resDoc = this.#parser.parseFromString(
@@ -1073,7 +1197,7 @@ export class EwsServer {
         messageEl.appendChild(subjectEl);
 
         const isReadEl = resDoc.createElement("t:IsRead");
-        isReadEl.textContent = "false";
+        isReadEl.textContent = item.syntheticMessage.metaState.read;
         messageEl.appendChild(isReadEl);
 
         if (includeContent) {
@@ -1090,6 +1214,30 @@ export class EwsServer {
   }
 
   /**
+   * Return a response to a `DeleteItem` request.
+   *
+   * @param {XMLDocument} reqDoc
+   */
+  #generateDeleteItemResponse(reqDoc) {
+    const resDoc = this.#parser.parseFromString(
+      DELETE_ITEM_RESPONSE_BASE,
+      "text/xml"
+    );
+
+    this.#setVersion(resDoc);
+
+    const reqItemIds = [...reqDoc.getElementsByTagName("t:ItemId")].map(id =>
+      id.getAttribute("Id")
+    );
+
+    for (const id of reqItemIds) {
+      this.#itemIdToItemInfo.delete(id);
+    }
+
+    return this.#serializer.serializeToString(resDoc);
+  }
+
+  /**
    * Add a new remote folder to the server to include in future responses.
    *
    * @param {RemoteFolder} folder
@@ -1099,6 +1247,9 @@ export class EwsServer {
     this.#idToFolder.set(folder.id, folder);
     if (folder.distinguishedId) {
       this.#distinguishedIdToFolder.set(folder.distinguishedId, folder);
+    }
+    if (folder.distinguishedId != "msgfolderroot") {
+      this.folderChanges.push(["create", folder.id]);
     }
   }
 
@@ -1117,6 +1268,7 @@ export class EwsServer {
         this.#distinguishedIdToFolder.delete(folderToDelete.distinguishedId);
       }
       this.deletedFolders.push(folderToDelete);
+      this.folderChanges.push(["delete", id]);
     }
   }
 
@@ -1131,6 +1283,7 @@ export class EwsServer {
     if (folder) {
       folder.displayName = newName;
       this.updatedFolderIds.push(id);
+      this.folderChanges.push(["update", id]);
     }
   }
 
@@ -1145,7 +1298,16 @@ export class EwsServer {
     if (!!childFolder && this.#idToFolder.has(newParentId)) {
       childFolder.parentId = newParentId;
       this.updatedFolderIds.push(id);
+      this.folderChanges.push(["update", id]);
     }
+  }
+
+  /**
+   * Removes all items from the server.
+   */
+  clearItems() {
+    this.#itemIdToItemInfo.clear();
+    this.itemChanges = [];
   }
 
   /**
@@ -1164,9 +1326,12 @@ export class EwsServer {
   addNewItemOrMoveItemToFolder(itemId, folderId, syntheticMessage) {
     let itemInfo = this.#itemIdToItemInfo.get(itemId);
     if (itemInfo) {
+      this.itemChanges.push(["delete", itemInfo.parentId, itemId]);
       itemInfo.parentId = folderId;
+      this.itemChanges.push(["create", folderId, itemId]);
     } else {
       itemInfo = new ItemInfo(folderId, syntheticMessage);
+      this.itemChanges.push(["create", folderId, itemId]);
     }
     this.#itemIdToItemInfo.set(itemId, itemInfo);
   }
@@ -1185,6 +1350,29 @@ export class EwsServer {
         message
       );
     }
+  }
+
+  /**
+   * Deletes an item from the server.
+   *
+   * @param {string} itemId
+   */
+  deleteItem(itemId) {
+    const itemInfo = this.#itemIdToItemInfo.get(itemId);
+    if (itemInfo) {
+      this.itemChanges.push(["delete", itemInfo.parentId, itemId]);
+      this.#itemIdToItemInfo.delete(itemId);
+    }
+  }
+
+  /**
+   * Get the item with the given id.
+   *
+   * @param {string} itemId
+   * @returns {ItemInfo}
+   */
+  getItem(itemId) {
+    return this.#itemIdToItemInfo.get(itemId);
   }
 
   /**
